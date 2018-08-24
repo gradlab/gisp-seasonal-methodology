@@ -17,7 +17,7 @@ methods; *not* for showing how the precise results of the paper came about.
 
 - `README.md`: this file
 - `gisp_analysis.Rmd`: the analysis R Markdown file
-- `gisp_analysis.html`: results of the analysis
+- `gisp_analysis.pdf`: results of the analysis
 - `data/`
     - `README.md`: an explanation of how the simulated data were generated
     - `simulate_data.R`: R script to generate the data included in this repo
