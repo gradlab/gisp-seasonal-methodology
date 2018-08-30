@@ -31,7 +31,7 @@ The simulated resistance data are in the `data/` folder. The columns show:
 - a combined clinic/year label
 
 ```{r load_resistance_data}
-res_dat = read_tsv('data/simulated_gisp_data.tsv') %>%
+res_dat = read_tsv('resistance_data/simulated_gisp_data.tsv') %>%
   mutate(t = (year - min(year)) * 12 + month,
          clinic_year = str_c(clinic, '_', year))
 
