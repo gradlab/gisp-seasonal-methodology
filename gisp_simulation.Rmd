@@ -1,5 +1,5 @@
 ---
-title: "Analysis of simulated GISP data"
+title: "Analysis of seasonal macrolide use and simulated GISP data"
 author: "Scott Olesen"
 output: pdf_document
 ---
@@ -11,12 +11,136 @@ library(magrittr)
 library(dplyr)
 library(readr)
 library(stringr)
+library(broom)
+library(ggplot2)
+library(gridExtra)
 ```
 
 # Antibiotic use
 
-```{r load_use_data}
+Macrolide use data are in the `use_data/` folder.
 
+```{r load_use_data}
+use_year_data = read_tsv('use_data/use_by_year.tsv')
+use_age_data = read_tsv('use_data/use_by_age.tsv')
+use_region_data = read_tsv('use_data/use_by_region.tsv')
+
+use_year_data
+```
+
+We fit:
+
+- one model to all the data
+- one model to each year
+- one model for each age group
+- one model for each Census region
+
+The fit is
+$$
+y \sim A \cos \left[ \omega (t - P) \right] + C,
+$$
+where $y$ is the MIC (2-fold dilution), $A$ is the amplitude, $\omega = 2 \pi /
+(12 \text{ months})$, $t$ is the month of the year, $P$ is the phase delay, and
+$C$ is the year-round average use.
+
+```{r use_models}
+omega = 2 * pi / 12
+
+# function to run the non-linear fit
+use_nls_f = function(df) {
+  nls(claims_per_1k_member ~ A * cos(omega * (fill_month - phase)) + offset,
+      start = list(A = 5.0, phase = 0.0, offset = 10.0),
+      data = df)
+}
+
+# run non-linear fits on subsets of the data
+use_model_f = function(dat, ...) {
+  groups = quos(...)
+
+  dat %>%
+    group_by_at(groups) %>%
+    nest() %>%
+    mutate(model = map(data, use_nls_f),
+           result = map(model, ~ tidy(., conf.int = TRUE)))
+}
+
+use_overall = use_model_f(use_year_data)
+use_year = use_model_f(use_year_data, year)
+use_age = use_model_f(use_age_data, age_group)
+use_region = use_model_f(use_region_data, region)
+```
+
+All the results are in this table, which recapitulates the paper's Supplemental
+Table.
+
+```{r use_model_results}
+bind_rows(
+  use_overall %>% mutate(group_name = 'overall', group = 'overall'),
+  use_year %>% mutate(group_name = 'year', group = as.character(year)),
+  use_age %>% mutate(group_name = 'age', group = age_group),
+  use_region %>% mutate(group_name = 'region', group = region)
+) %>%
+  select(group_name, group, result) %>%
+  unnest() %>%
+  mutate(group_name = factor(group_name, levels=c('overall', 'year', 'age', 'region')),
+         sig = if_else(p.value < 0.05, '*', ' '),
+         range = sprintf('%.2f (%.2f to %.2f) %s', estimate, conf.low, conf.high, sig)) %>%
+  select(group_name, group, term, range) %>%
+  spread(term, range) %>%
+  select(group_name, group, A, phase, offset) %>%
+  arrange(group_name, group) %>%
+  kable(caption = 'Macrolide use fits')
+```
+
+To recapitulate the paper's Figure 1:
+
+```{r use_plots}
+x_axis_labels = c('Jan', '', '', '', '', '', 'Jul', '' ,'', '', '', 'Dec')
+
+# function to plot the three macrolide use subfigures
+use_plot_f = function(df, group_, shape_values, linetype_values, title,
+                      legend_x = 0.21, legend_y = 0.18) {
+  group_ = enquo(group_)
+
+  p = ggplot(df, aes_(~fill_month, ~claims_per_1k_member,
+                 group = group_, shape = group_, linetype = group_)) +
+    geom_point() +
+    geom_line() +
+    scale_shape_manual(values = shape_values) +
+    scale_linetype_manual(values = linetype_values) +
+    scale_x_discrete('', labels = x_axis_labels) +
+    ylab('') +
+    scale_y_continuous(limits = c(0, 22), expand = c(0, 0)) +
+    theme_classic() +
+    theme(legend.position = c(legend_x, legend_y),
+        axis.text = element_text(color = 'black', size = 7),
+        legend.title = element_blank(),
+        legend.background = element_blank()) +
+    ggtitle(title)
+
+  p
+}
+
+p1 = use_year_data %>%
+  mutate_at(vars(fill_month, year), factor) %>%
+  use_plot_f(year, c(2, 15, 0, 19, 1), rep(c(3, 1), 5), 'a) By year') +
+  ylab('monthly pharmacy prescription fills per 1,000 members')
+
+p2 = use_age_data %>%
+  filter(year == 2015) %>%
+  mutate(fill_month = factor(fill_month), age = fct_rev(factor(age_group))) %>%
+  use_plot_f(age, c(2, 15, 0, 19, 1), rep(c(3, 1), 5), 'b) By age group, 2015')
+
+p3 = use_region_data %>%
+  filter(year == 2015) %>%
+  mutate(region = factor(region, levels = c('South', 'Midwest', 'Northeast', 'West')),
+         fill_month = factor(fill_month)) %>%
+  use_plot_f(region, c(15, 0, 19, 1), rep(c(1, 3), 4), 'c) By region, 2015', 0.28, 0.14)
+
+# show a single combined figure
+grid.arrange(
+  p1, p2, p3, nrow=1, padding=unit(0.1, 'line')
+)
 ```
 
 # Resistance
