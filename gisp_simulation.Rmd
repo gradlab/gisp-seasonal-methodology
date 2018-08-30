@@ -13,7 +13,15 @@ library(readr)
 library(stringr)
 ```
 
-The simulated data are in the `data/` folder. The columns show:
+# Antibiotic use
+
+```{r load_use_data}
+
+```
+
+# Resistance
+
+The simulated resistance data are in the `data/` folder. The columns show:
 
 - the clinic (of 40 total) that the isolate was collected from
 - the year of isolation
@@ -22,12 +30,12 @@ The simulated data are in the `data/` folder. The columns show:
 - the months since the start of the dataset `t`
 - a combined clinic/year label
 
-```{r load_data}
-dat = read_tsv('data/simulated_gisp_data.tsv') %>%
+```{r load_resistance_data}
+res_dat = read_tsv('data/simulated_gisp_data.tsv') %>%
   mutate(t = (year - min(year)) * 12 + month,
          clinic_year = str_c(clinic, '_', year))
 
-dat
+res_dat
 ```
 
 The data were simulated to reproduce some of the features of the original GISP
@@ -36,7 +44,7 @@ clinics, and the seasonal pattern is not obvious at all to the eye. The plot
 shows the monthly average 2-fold dilutions in each clinic and month.
 
 ```{r monthly_means}
-dat %>%
+res_dat %>%
   group_by(clinic, t) %>%
   summarize(y = mean(y)) %>%
   ggplot(aes(t, y)) +
@@ -60,18 +68,18 @@ $C_{c(i)}$ terms in the paper.
 
 ```{r run_model}
 # number of clinic/year combinations in the data
-n_cys = length(unique(dat$clinic_year))
+n_cys = length(unique(res_dat$clinic_year))
 
 # create a model matrix: rows represent data rows, columns represent each of
 # the clinic/years. Most entries are 0; 1 means that this data row is from the
 # corresponding clinic/year.
-model_matrix = model.matrix(~ 0 + clinic_year, dat) %>%
+model_matrix = model.matrix(~ 0 + clinic_year, res_dat) %>%
   set_colnames(str_replace(colnames(.), '^clinic_year', ''))
 
-stopifnot(dim(model_matrix) == c(nrow(dat), n_cys))
+stopifnot(dim(model_matrix) == c(nrow(res_dat), n_cys))
 
 # as a first guess for clinic/year intercepts, use the mean values
-start_intercepts = dat %>%
+start_intercepts = res_dat %>%
   group_by(clinic_year) %>%
   summarize(y = mean(y)) %>%
   arrange(clinic_year) %T>%
@@ -92,17 +100,28 @@ fit_f = function(month, A, phase, slope, intercept) {
 
 # check if the model has been run previously. if it has, don't bother running
 # it again, since it takes a few minutes.
-model_fn = 'gisp_model.rds'
+model_fn = 'resistance_model_values.tsv'
 if (file.exists(model_fn)) {
-  model = read_rds(model_fn)
+  res_model_values = read_tsv(model_fn)
 } else {
   # fit the model
-  model = nls(y ~ fit_f(month, A, phase, slope, intercept),
+  res_model = nls(y ~ fit_f(month, A, phase, slope, intercept),
               start = list(A = 0.5, phase = 0.0, intercept = start_intercepts, slope = start_slopes),
-              data = dat)
+              data = res_dat)
 
-  # then save it
-  write_rds(model, model_fn)
+  # extract the interesting bits
+  model_values1 = summary(res_model)$coefficients %>%
+    set_colnames(c('estimate', 'std.error', 'statistic', 'p.value')) %>%
+    as_tibble(rownames = 'term')
+
+  model_values2 = confint.default(res_model) %>%
+    set_colnames(c('conf.low', 'conf.high')) %>%
+    as_tibble(rownames = 'term')
+
+  res_model_values = left_join(model_values1, model_values2, by = 'term')
+
+  # save those values
+  write_tsv(res_model_values, model_fn)
 }
 ```
 
@@ -111,6 +130,7 @@ and confidence intervals for the amplitude $A$ and phase terms. The data were
 generated with amplitude $A = 0.1$ and phase $1$.
 
 ```{r model_coefficients}
-summary(model)$coefficients[1:2, ]
-confint.default(model)[1:2, ]
+res_model_values %>%
+  filter(term %in% c('A', 'phase')) %>%
+  kable()
 ```
